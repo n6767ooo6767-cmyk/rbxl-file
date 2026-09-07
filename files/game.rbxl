@@ -5,163 +5,323 @@
     <Properties>
       <string name="Name">Workspace</string>
     </Properties>
+    <Item class="Part" referent="FLOOR">
+      <Properties>
+        <string name="Name">Ground</string>
+        <Vector3 name="Size"><X>180</X><Y>1</Y><Z>140</Z></Vector3>
+        <CoordinateFrame name="CFrame"><X>0</X><Y>0</Y><Z>0</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame>
+        <bool name="Anchored">true</bool>
+        <token name="Material">512</token>
+      </Properties>
+    </Item>
+    <Item class="SpawnLocation" referent="SPAWN">
+      <Properties>
+        <string name="Name">HomeSpawn</string>
+        <Vector3 name="Size"><X>8</X><Y>1</Y><Z>8</Z></Vector3>
+        <CoordinateFrame name="CFrame"><X>0</X><Y>2</Y><Z>18</Z><R00>1</R00><R01>0</R01><R02>0</R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame>
+        <bool name="Anchored">true</bool>
+        <bool name="Neutral">true</bool>
+        <bool name="AllowTeamChangeOnTouch">false</bool>
+      </Properties>
+    </Item>
   </Item>
   <Item class="ServerScriptService" referent="RBXSERVER">
-    <Properties>
-      <string name="Name">ServerScriptService</string>
-    </Properties>
+    <Properties><string name="Name">ServerScriptService</string></Properties>
     <Item class="Script" referent="RBXMAIN">
       <Properties>
-        <string name="Name">MainGame</string>
-        <ProtectedString name="Source"><![CDATA[local Players=game:GetService("Players")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local DataStoreService=game:GetService("DataStoreService")
-local Lighting=game:GetService("Lighting")
+        <string name="Name">MyHouseNotMine</string>
+        <ProtectedString name="Source"><![CDATA[-- МОЙ ДОМ НЕ МОЙ
+-- Один Script: мир, дом, работа, магазин, дни, аномалии, деньги и сохранение.
 
-local store=DataStoreService:GetDataStore("MyHouseNotMine_v1")
-local events=ReplicatedStorage:FindFirstChild("HouseEvents") or Instance.new("Folder",ReplicatedStorage)
-events.Name="HouseEvents"
-local message=events:FindFirstChild("Message") or Instance.new("RemoteEvent",events)
-message.Name="Message"
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+local Lighting = game:GetService("Lighting")
 
-local old=workspace:FindFirstChild("MY_HOUSE_GAME")
+local STORE = DataStoreService:GetDataStore("MyHouseNotMine_v3")
+local WORLD_NAME = "MY_HOUSE_GAME"
+local DAY_LENGTH = 600 -- 10 минут на игровой день
+local MAX_DAY = 12
+
+local old = workspace:FindFirstChild(WORLD_NAME)
 if old then old:Destroy() end
-local world=Instance.new("Folder",workspace)
-world.Name="MY_HOUSE_GAME"
+local world = Instance.new("Folder")
+world.Name = WORLD_NAME
+world.Parent = workspace
 
-local function part(name,size,pos,material)
-    local p=Instance.new("Part",world)
-    p.Name=name
-    p.Size=size
-    p.Position=pos
-    p.Anchored=true
-    p.Material=material or Enum.Material.SmoothPlastic
+local states = {}
+
+local function part(parent, name, size, pos, material, color)
+    local p = Instance.new("Part")
+    p.Name = name
+    p.Size = size
+    p.Position = pos
+    p.Anchored = true
+    p.Material = material or Enum.Material.SmoothPlastic
+    if color then p.Color = color end
+    p.Parent = parent
     return p
 end
 
-part("Floor",Vector3.new(80,1,50),Vector3.new(0,0,0),Enum.Material.Wood)
-part("BackWall",Vector3.new(80,16,1),Vector3.new(0,8,-25))
-part("LeftWall",Vector3.new(1,16,50),Vector3.new(-40,8,0))
-part("RightWall",Vector3.new(1,16,50),Vector3.new(40,8,0))
-part("FrontWall",Vector3.new(80,16,1),Vector3.new(0,8,25))
-part("Table",Vector3.new(10,1,5),Vector3.new(-12,4,0),Enum.Material.Wood)
-part("Bed",Vector3.new(10,2,6),Vector3.new(15,2,-14),Enum.Material.Fabric)
-part("Sofa",Vector3.new(10,3,4),Vector3.new(12,2,8),Enum.Material.Fabric)
+local function label(parent, text, size, pos)
+    local gui = Instance.new("BillboardGui")
+    gui.Name = "Sign"
+    gui.Size = UDim2.fromOffset(size or 260, 60)
+    gui.StudsOffset = Vector3.new(0, 3, 0)
+    gui.AlwaysOnTop = true
+    gui.Parent = parent
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.fromScale(1, 1)
+    t.BackgroundTransparency = 0.25
+    t.BackgroundColor3 = Color3.fromRGB(15,15,20)
+    t.TextColor3 = Color3.new(1,1,1)
+    t.TextScaled = true
+    t.Font = Enum.Font.GothamBold
+    t.Text = text
+    t.Parent = gui
+    return t
+end
 
-local spawn=Instance.new("SpawnLocation",world)
-spawn.Size=Vector3.new(5,1,5)
-spawn.Position=Vector3.new(0,2,15)
-spawn.Anchored=true
-spawn.Neutral=true
+local function prompt(parent, action, object, callback)
+    local pr = Instance.new("ProximityPrompt")
+    pr.ActionText = action
+    pr.ObjectText = object
+    pr.HoldDuration = 0.4
+    pr.MaxActivationDistance = 12
+    pr.RequiresLineOfSight = false
+    pr.Parent = parent
+    pr.Triggered:Connect(callback)
+    return pr
+end
 
-local day=1
-local money=100
-local phase="home"
-local groceries=0
+-- Статичный мир, чтобы игрок никогда не появлялся в пустоте.
+local ground = part(world, "Ground", Vector3.new(180,1,140), Vector3.new(0,0,0), Enum.Material.Grass, Color3.fromRGB(70,100,70))
 
-local function say(player,text)
-    if player and player.Parent then message:FireClient(player,text) end
+-- Дорога
+part(world, "Road", Vector3.new(170,0.2,18), Vector3.new(0,0.65,0), Enum.Material.Asphalt, Color3.fromRGB(35,35,35))
+for x = -75, 75, 15 do
+    part(world, "RoadLine", Vector3.new(8,0.25,0.5), Vector3.new(x,0.8,0), Enum.Material.Neon, Color3.fromRGB(230,220,100))
+end
+
+-- Дом
+local home = Instance.new("Folder")
+home.Name = "HOME"
+home.Parent = world
+part(home,"Floor",Vector3.new(48,1,34),Vector3.new(-50,2,28),Enum.Material.Wood,Color3.fromRGB(120,82,55))
+part(home,"BackWall",Vector3.new(48,14,1),Vector3.new(-50,9,45),Enum.Material.Wood,Color3.fromRGB(90,65,50))
+part(home,"LeftWall",Vector3.new(1,14,34),Vector3.new(-74,9,28),Enum.Material.Wood,Color3.fromRGB(90,65,50))
+part(home,"RightWall",Vector3.new(1,14,34),Vector3.new(-26,9,28),Enum.Material.Wood,Color3.fromRGB(90,65,50))
+part(home,"FrontWallA",Vector3.new(17,14,1),Vector3.new(-65.5,9,11),Enum.Material.Wood,Color3.fromRGB(90,65,50))
+part(home,"FrontWallB",Vector3.new(17,14,1),Vector3.new(-34.5,9,11),Enum.Material.Wood,Color3.fromRGB(90,65,50))
+label(home,"🏠 МОЙ ДОМ НЕ МОЙ",300,Vector3.new(-50,14,44))
+part(home,"Bed",Vector3.new(10,2,7),Vector3.new(-39,3,37),Enum.Material.Fabric,Color3.fromRGB(80,90,120))
+part(home,"Table",Vector3.new(9,2,5),Vector3.new(-61,3,27),Enum.Material.Wood,Color3.fromRGB(100,65,40))
+part(home,"Sofa",Vector3.new(11,3,4),Vector3.new(-59,3,37),Enum.Material.Fabric,Color3.fromRGB(70,70,75))
+part(home,"Picture",Vector3.new(5,4,0.3),Vector3.new(-49,8,44.2),Enum.Material.SmoothPlastic,Color3.fromRGB(45,60,80))
+local sleepSpot = part(home,"Sleep",Vector3.new(5,1,3),Vector3.new(-39,4,28),Enum.Material.SmoothPlastic,Color3.fromRGB(30,30,30))
+prompt(sleepSpot,"Спать","Кровать",function(player)
+    local s = states[player]
+    if not s then return end
+    if s.phase ~= "home" then
+        say(player,"Сейчас не время спать.")
+        return
+    end
+    s.time = DAY_LENGTH
+    say(player,"🌙 Ты лёг спать... Утро наступает.")
+end)
+
+-- Работа
+local work = Instance.new("Folder")
+work.Name = "WORK"
+work.Parent = world
+part(work,"Building",Vector3.new(36,12,28),Vector3.new(48,6,28),Enum.Material.Concrete,Color3.fromRGB(90,90,95))
+label(work,"💼 РАБОТА",240,Vector3.new(48,14,28))
+local workDesk = part(work,"Desk",Vector3.new(10,2,5),Vector3.new(48,3,28),Enum.Material.Metal,Color3.fromRGB(55,55,60))
+prompt(workDesk,"Работать","Рабочее место",function(player)
+    local s=states[player]
+    if not s then return end
+    if s.phase ~= "work" then say(player,"Сейчас у тебя другой этап дня."); return end
+    if s.workDone then say(player,"Ты уже отработал сегодня."); return end
+    s.workDone=true
+    s.money += 80
+    say(player,"💼 Смена закончена! Зарплата +$80.")
+end)
+
+-- Магазин
+local shop = Instance.new("Folder")
+shop.Name = "SHOP"
+shop.Parent = world
+part(shop,"Building",Vector3.new(30,11,24),Vector3.new(0,5.5,45),Enum.Material.Brick,Color3.fromRGB(120,75,55))
+label(shop,"🛒 МАГАЗИН",240,Vector3.new(0,14,45))
+local shelf = part(shop,"Shelf",Vector3.new(10,4,3),Vector3.new(0,3,42),Enum.Material.Wood,Color3.fromRGB(100,65,40))
+prompt(shelf,"Купить продукты ($25)","Магазин",function(player)
+    local s=states[player]
+    if not s then return end
+    if s.phase ~= "shop" then say(player,"В магазин можно идти после работы."); return end
+    if s.money < 25 then say(player,"💸 Денег не хватает."); return end
+    s.money -= 25
+    s.groceries += 1
+    say(player,"🛒 Продукты куплены. -$25")
+end)
+
+-- Домашняя дверь/выход
+local exit = part(home,"Exit",Vector3.new(5,5,1),Vector3.new(-50,4,11),Enum.Material.Glass,Color3.fromRGB(100,150,190))
+prompt(exit,"Выйти","Дверь",function(player)
+    local s=states[player]
+    if not s then return end
+    if s.phase == "home" then
+        s.phase="work"
+        say(player,"🚶 Ты вышел из дома. Следующая остановка — работа.")
+        teleport(player,Vector3.new(48,4,18))
+    else
+        say(player,"Сначала закончи текущую часть дня.")
+    end
+end)
+
+local function getGui(player)
+    local pg=player:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    local gui=pg:FindFirstChild("MyHouseUI")
+    if gui then return gui end
+    gui=Instance.new("ScreenGui")
+    gui.Name="MyHouseUI"
+    gui.ResetOnSpawn=false
+    gui.Parent=pg
+    local box=Instance.new("TextLabel")
+    box.Name="Info"
+    box.AnchorPoint=Vector2.new(0.5,0)
+    box.Position=UDim2.fromScale(0.5,0.03)
+    box.Size=UDim2.fromScale(0.7,0.08)
+    box.BackgroundColor3=Color3.fromRGB(15,15,20)
+    box.BackgroundTransparency=0.15
+    box.TextColor3=Color3.new(1,1,1)
+    box.TextScaled=true
+    box.Font=Enum.Font.GothamBold
+    box.TextWrapped=true
+    box.Parent=gui
+    return gui
+end
+
+function say(player,text)
+    local gui=getGui(player)
+    local box=gui and gui:FindFirstChild("Info")
+    if box then box.Text=text end
+end
+
+function teleport(player,pos)
+    local char=player.Character
+    if char then char:PivotTo(CFrame.new(pos)) end
 end
 
 local function save(player)
+    local s=states[player]
+    if not s then return end
     pcall(function()
-        store:SetAsync("u_"..player.UserId,{day=day,money=money,phase=phase,groceries=groceries})
+        STORE:SetAsync("u_"..player.UserId,{day=s.day,money=s.money,groceries=s.groceries})
     end)
 end
 
 local function load(player)
-    local ok,data=pcall(function()
-        return store:GetAsync("u_"..player.UserId)
-    end)
-    if ok and data then
-        day=data.day or day
-        money=data.money or money
-        phase=data.phase or phase
-        groceries=data.groceries or groceries
+    local s={day=1,money=100,groceries=0,phase="home",time=0,workDone=false,anomaly=false}
+    local ok,data=pcall(function() return STORE:GetAsync("u_"..player.UserId) end)
+    if ok and type(data)=="table" then
+        s.day=math.clamp(tonumber(data.day) or 1,1,MAX_DAY)
+        s.money=tonumber(data.money) or 100
+        s.groceries=tonumber(data.groceries) or 0
+    end
+    states[player]=s
+    return s
+end
+
+local function resetDay(s)
+    s.phase="home"
+    s.time=0
+    s.workDone=false
+    s.anomaly=false
+end
+
+local function anomalyForDay(s)
+    if s.day < 3 then return end
+    if math.random() > math.min(0.25 + s.day*0.04,0.65) then return end
+    s.anomaly=true
+    if s.day % 4 == 0 then
+        local pic=home:FindFirstChild("Picture")
+        if pic then pic.Position=Vector3.new(-49,8,44.2); pic.Orientation=Vector3.new(0,0,math.random(8,25)) end
+        return "🖼️ Картина в доме выглядит неправильно..."
+    elseif s.day % 3 == 0 then
+        local sign=home:FindFirstChild("Sign")
+        if sign then
+            local t=sign:FindFirstChildOfClass("TextLabel")
+            if t then t.Text="🏠 ЭТО НЕ ТВОЙ ДОМ" end
+        end
+        return "😶 На табличке дома что-то изменилось."
+    else
+        Lighting.ClockTime=2
+        return "🕑 Часы показывают странное время."
     end
 end
 
 Players.PlayerAdded:Connect(function(player)
-    load(player)
-    task.wait(1)
-    say(player,"День "..day.." • "..phase.." • $"..money)
-    player.CharacterAdded:Connect(function(character)
-        task.wait(.2)
-        character:PivotTo(CFrame.new(0,3,14))
+    local s=load(player)
+    player.CharacterAdded:Connect(function(char)
+        task.wait(0.25)
+        teleport(player,Vector3.new(-50,4,18))
+        say(player,"🏠 Добро пожаловать домой. День "..s.day..". Найди дверь и иди на работу.")
     end)
+    if player.Character then
+        task.wait(0.25)
+        teleport(player,Vector3.new(-50,4,18))
+    end
 end)
 
-Players.PlayerRemoving:Connect(save)
+Players.PlayerRemoving:Connect(function(player)
+    save(player)
+    states[player]=nil
+end)
 
-while true do
-    task.wait(12)
-    for _,player in Players:GetPlayers() do
-        if phase=="home" then
-            say(player,"🌅 Утро. Пора собираться на работу.")
-            phase="work"
-        elseif phase=="work" then
-            money+=80
-            say(player,"💼 Работа закончена. Зарплата +$80. Загляни в магазин.")
-            phase="shop"
-        elseif phase=="shop" then
-            if money>=25 then
-                money-=25
-                groceries+=1
-                say(player,"🛒 Ты купил продукты за $25.")
-            else
-                say(player,"🛒 Денег мало. Придётся идти домой.")
+task.spawn(function()
+    while true do
+        task.wait(1)
+        for player,s in pairs(states) do
+            if player.Parent then
+                s.time += 1
+                local minutes = s.time % 60
+                if s.time == 1 then
+                    Lighting.ClockTime=7
+                    say(player,"🌅 День "..s.day.." • Дом • $"..s.money.." • Продукты: "..s.groceries)
+                end
+                if s.phase=="work" and s.workDone then
+                    s.phase="shop"
+                    teleport(player,Vector3.new(48,4,18))
+                    say(player,"🛒 Работа окончена. Иди в магазин за продуктами.")
+                end
+                if s.phase=="shop" and s.groceries > 0 and s.time > 30 then
+                    -- Один купленный набор считается достаточным для возвращения домой.
+                    s.phase="home"
+                    teleport(player,Vector3.new(-50,4,18))
+                    say(player,"🏠 Пора домой. Вернись и отдохни.")
+                end
+                if s.time >= DAY_LENGTH then
+                    s.day += 1
+                    if s.day > MAX_DAY then
+                        s.day=MAX_DAY
+                        say(player,"🏆 Ты пережил 12 дней. Но дом всё ещё не твой...")
+                    else
+                        resetDay(s)
+                        Lighting.ClockTime=7
+                        local text=anomalyForDay(s)
+                        if text then say(player,"День "..s.day..". "..text) else say(player,"🌅 Начался день "..s.day..".") end
+                        teleport(player,Vector3.new(-50,4,18))
+                    end
+                    save(player)
+                end
+                if minutes==0 then save(player) end
             end
-            phase="home"
-        else
-            day+=1
-            say(player,"🌙 Ты лёг спать. День "..day.." начинается завтра.")
         end
-        save(player)
     end
-    Lighting.ClockTime=(day%2==0) and 8 or 20
-end]]></ProtectedString>
+end)
+
+print("[MyHouseNotMine] Game loaded successfully. One Script mode active.")]]></ProtectedString>
       </Properties>
-    </Item>
-  </Item>
-  <Item class="StarterPlayer" referent="RBXSTARTER">
-    <Properties><string name="Name">StarterPlayer</string></Properties>
-    <Item class="StarterPlayerScripts" referent="RBXSCRIPTS">
-      <Properties><string name="Name">StarterPlayerScripts</string></Properties>
-      <Item class="LocalScript" referent="RBXCLIENT">
-        <Properties>
-          <string name="Name">MainUI</string>
-          <ProtectedString name="Source"><![CDATA[local Players=game:GetService("Players")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local TweenService=game:GetService("TweenService")
-local player=Players.LocalPlayer
-local message=ReplicatedStorage:WaitForChild("HouseEvents"):WaitForChild("Message")
-local gui=Instance.new("ScreenGui",player:WaitForChild("PlayerGui"))
-gui.Name="MyHouseUI"
-gui.ResetOnSpawn=false
-local frame=Instance.new("Frame",gui)
-frame.AnchorPoint=Vector2.new(.5,.5)
-frame.Position=UDim2.fromScale(.5,.88)
-frame.Size=UDim2.fromScale(.75,.11)
-frame.BackgroundColor3=Color3.fromRGB(10,10,15)
-frame.BackgroundTransparency=1
-local label=Instance.new("TextLabel",frame)
-label.Size=UDim2.fromScale(1,1)
-label.BackgroundTransparency=1
-label.TextColor3=Color3.new(1,1,1)
-label.TextScaled=true
-label.Font=Enum.Font.GothamMedium
-message.OnClientEvent:Connect(function(text)
-    label.Text=text
-    frame.BackgroundTransparency=1
-    frame.Visible=true
-    TweenService:Create(frame,TweenInfo.new(.35),{BackgroundTransparency=.15}):Play()
-    task.wait(4)
-    TweenService:Create(frame,TweenInfo.new(.5),{BackgroundTransparency=1}):Play()
-    task.wait(.55)
-    frame.Visible=false
-end)]]></ProtectedString>
-        </Properties>
-      </Item>
     </Item>
   </Item>
 </roblox>
